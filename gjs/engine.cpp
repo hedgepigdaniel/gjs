@@ -207,6 +207,11 @@ on_garbage_collect(JSContext *cx,
      * garbage collected. */
     if (status == JSGC_BEGIN)
         gjs_object_clear_toggles();
+    /* After garbage collection, invalidate any closures that have been
+     * disconnected. We can't do this during garbage collection because it's
+     * illegal to stop tracing a closure in the middle of GC. */
+    else if (status == JSGC_END)
+        gjs_object_invalidate_closures();
 }
 
 static bool

@@ -84,6 +84,8 @@ extern struct JSClass gjs_object_instance_class;
 
 static std::set<ObjectInstance *> dissociate_list;
 
+static std::set<GClosure *> closures_to_invalidate;
+
 GJS_DEFINE_PRIV_FROM_JS(ObjectInstance, gjs_object_instance_class)
 
 static void            disassociate_js_gobject (GObject *gobj);
@@ -1268,18 +1270,33 @@ associate_js_gobject (JSContext       *context,
     g_object_add_toggle_ref(gobj, wrapped_gobj_toggle_notify, NULL);
 }
 
+/**
+ * gjs_object_invalidate_closures:
+ *
+ * Should be called periodically to clean up all closures that need to be
+ * invalidated as a result of running a garbage collection. Currently we call
+ * it at the end of every GC, in engine.cpp.
+ */
+void
+gjs_object_invalidate_closures(void)
+{
+    for (GClosure *closure : closures_to_invalidate) {
+        g_closure_invalidate(closure);
+        g_closure_unref(closure);
+    }
+    closures_to_invalidate.clear();
+}
+
+/* Called at the end of an object's lifetime, when all signals get
+ * disconnected. */
 static void
 invalidate_all_signals(ObjectInstance *priv)
 {
-    /* Can't loop directly through the items, since invalidating an item's
-     * closure might have the effect of removing the item from the set in the
-     * invalidate notifier */
-    while (!priv->signals.empty()) {
-        /* This will also free cd, through the closure invalidation mechanism */
-        GClosure *closure = *priv->signals.begin();
-        g_closure_invalidate(closure);
-        /* Erase element if not already erased */
-        priv->signals.erase(closure);
+    for (GClosure *closure : priv->signals) {
+        bool inserted;
+        std::tie(std::ignore, inserted) = closures_to_invalidate.insert(closure);
+        if (inserted)
+            g_closure_ref(closure);
     }
 }
 
@@ -1479,6 +1496,13 @@ object_instance_finalize(JSFreeOp  *fop,
     /* This applies only to instances, not prototypes, but it's possible that
      * an instance's GObject is already freed at this point. */
     invalidate_all_signals(priv);
+
+    /* The invalidate notifier will want to use this object, so remove it */
+    for (GClosure *closure : priv->signals) {
+        g_closure_remove_invalidate_notifier(closure, priv,
+                                             signal_connection_invalidated);
+    }
+    priv->signals.clear();
 
     /* Object is instance, not prototype, AND GObject is not already freed */
     if (priv->gobj) {
