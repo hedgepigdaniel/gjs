@@ -28,6 +28,7 @@
 #include <util/log.h>
 
 #include "closure.h"
+#include "gjs/context-private.h"
 #include "gjs/jsapi-util-root.h"
 #include "gjs/jsapi-wrapper.h"
 #include "gjs/mem.h"
@@ -166,10 +167,16 @@ closure_set_invalid(gpointer  data,
 {
     Closure *self = &((GjsClosure*) closure)->priv;
 
-    gjs_debug_closure("Invalidating signal closure %p which calls object %p",
-                      closure, self->obj.get());
+    GjsContext *gcx = gjs_context_get_current();
+    if (_gjs_context_destroying(gcx)) {
+        gjs_debug_closure("Invalidating signal closure %p which calls a dead "
+                          "object", closure);
+    } else {
+        gjs_debug_closure("Invalidating signal closure %p which calls object "
+                          "%p", closure, self->obj.get());
+        self->obj.reset();
+    }
 
-    self->obj.reset();
     self->context = nullptr;
 
     GJS_DEC_COUNTER(closure);
@@ -181,7 +188,11 @@ closure_finalize(gpointer  data,
 {
     Closure *self = &((GjsClosure*) closure)->priv;
 
-    self->~Closure();
+    /* All objects are already destroyed in the last GC when the context is
+     * destroyed. */
+    GjsContext *gcx = gjs_context_get_current();
+    if (!_gjs_context_destroying(gcx))
+        self->~Closure();
 }
 
 void
