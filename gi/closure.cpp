@@ -174,6 +174,7 @@ closure_set_invalid(gpointer  data,
     } else {
         gjs_debug_closure("Invalidating signal closure %p which calls object "
                           "%p", closure, self->obj.get());
+        self->obj.prevent_collection();
         self->obj.reset();
     }
 
